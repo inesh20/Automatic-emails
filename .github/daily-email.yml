@@ -1,0 +1,89 @@
+name: Daily Job Digest
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 06:00 UTC (env. 08:00 à Paris l'été / 07:00 l'hiver)
+  workflow_dispatch:       # Permet de lancer manuellement depuis l’onglet Actions
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    env:
+      # Secrets injectés dans l'env
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      RSS_FEEDS: ${{ secrets.RSS_FEEDS }}
+      INCLUDE_KEYWORDS: ${{ secrets.INCLUDE_KEYWORDS }}
+      EXCLUDE_KEYWORDS: ${{ secrets.EXCLUDE_KEYWORDS }}
+      HOURS_WINDOW: ${{ secrets.HOURS_WINDOW }}
+      EMAIL_SUBJECT: ${{ secrets.EMAIL_SUBJECT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build config.yaml from secrets
+        run: |
+          # Transforme RSS_FEEDS "a,b,c" en liste YAML
+          IFS=',' read -ra FEEDS <<< "${RSS_FEEDS}"
+          echo "hours_window: ${HOURS_WINDOW:-24}" > config.yaml
+          echo "rss_feeds:" >> config.yaml
+          for f in "${FEEDS[@]}"; do
+            # trim espaces
+            f="$(echo "$f" | xargs)"
+            [ -n "$f" ] && echo "  - \"$f\"" >> config.yaml
+          done
+
+          # Mots-clés inclus/exclus
+          to_yaml_list () {
+            local raw="$1"
+            local out=""
+            IFS=',' read -ra arr <<< "$raw"
+            for k in "${arr[@]}"; do
+              k="$(echo "$k" | xargs)"
+              [ -n "$k" ] && out="${out} \"$k\","
+            done
+            echo "${out%,}"
+          }
+
+          INC=$(to_yaml_list "${INCLUDE_KEYWORDS}")
+          EXC=$(to_yaml_list "${EXCLUDE_KEYWORDS}")
+
+          echo "include_keywords: [${INC}]" >> config.yaml
+          echo "exclude_keywords: [${EXC}]" >> config.yaml
+          echo "tags: [\"Paris\", \"emploi\"]" >> config.yaml
+          echo "email_subject: \"${EMAIL_SUBJECT:-Veille d'offres d'emploi – résumé quotidien}\"" >> config.yaml
+
+          cat <<EOF >> config.yaml
+email:
+  from: "${EMAIL_FROM}"
+  to:
+    $(for addr in $(echo "${EMAIL_TO}" | tr ',' '\n'); do echo "  - \"${addr}\""; done)
+  smtp:
+    host: "${SMTP_HOST}"
+    port: ${SMTP_PORT:-587}
+    username: "${SMTP_USERNAME}"
+    password: "${SMTP_PASSWORD}"
+    use_tls: true
+EOF
+
+          echo "----- config.yaml -----"
+          cat config.yaml
+
+      - name: Run script
+        run: |
+          python job_digest.py
