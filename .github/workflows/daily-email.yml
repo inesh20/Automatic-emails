@@ -3,7 +3,7 @@ name: Daily Job Digest
 on:
   schedule:
     - cron: "0 6 * * *"   # 06:00 UTC (≈ 08:00 Paris en été / 07:00 en hiver)
-  workflow_dispatch:       # Permet de lancer manuellement depuis l’onglet Actions
+  workflow_dispatch:       # Lancer manuellement depuis l’onglet Actions
 
 jobs:
   send-digest:
@@ -22,6 +22,13 @@ jobs:
       EXCLUDE_KEYWORDS: ${{ secrets.EXCLUDE_KEYWORDS }}
       HOURS_WINDOW: ${{ secrets.HOURS_WINDOW }}
       EMAIL_SUBJECT: ${{ secrets.EMAIL_SUBJECT }}
+
+      # Nouveaux pour le filtrage/présentation
+      TIMEZONE: ${{ secrets.TIMEZONE }}
+      ONLY_TODAY: ${{ secrets.ONLY_TODAY }}
+      GROUP_BY: ${{ secrets.GROUP_BY }}
+      LIMIT_PER_SOURCE: ${{ secrets.LIMIT_PER_SOURCE }}
+      HIGHLIGHT_KEYWORDS: ${{ secrets.HIGHLIGHT_KEYWORDS }}
 
     steps:
       - name: Checkout
@@ -42,9 +49,24 @@ jobs:
         run: |
           set -euo pipefail
 
-          # hours_window + flux RSS
+          # Valeurs par défaut si secrets non définis
+          : "${HOURS_WINDOW:=24}"
+          : "${TIMEZONE:=Europe/Paris}"
+          : "${ONLY_TODAY:=false}"
+          : "${GROUP_BY:=day}"                 # none | day
+          : "${LIMIT_PER_SOURCE:=0}"          # 0 = illimité
+          : "${HIGHLIGHT_KEYWORDS:=true}"
+
+          # En-tête config
+          echo "hours_window: ${HOURS_WINDOW}"           >  config.yaml
+          echo "timezone: \"${TIMEZONE}\""               >> config.yaml
+          echo "only_today: ${ONLY_TODAY}"               >> config.yaml
+          echo "group_by: \"${GROUP_BY}\""               >> config.yaml
+          echo "limit_per_source: ${LIMIT_PER_SOURCE}"   >> config.yaml
+          echo "highlight_keywords: ${HIGHLIGHT_KEYWORDS}" >> config.yaml
+
+          # Flux RSS
           IFS=',' read -ra FEEDS <<< "${RSS_FEEDS:-}"
-          echo "hours_window: ${HOURS_WINDOW:-24}" > config.yaml
           echo "rss_feeds:" >> config.yaml
           for f in "${FEEDS[@]:-}"; do
             f="$(echo "$f" | xargs)"
@@ -67,7 +89,7 @@ jobs:
 
           echo "include_keywords: [${INC}]" >> config.yaml
           echo "exclude_keywords: [${EXC}]" >> config.yaml
-          echo "tags: [\"Paris\", \"emploi\"]" >> config.yaml
+          echo "tags: [\"emploi\", \"Paris\"]" >> config.yaml
           echo "email_subject: \"${EMAIL_SUBJECT:-Veille d'offres d'emploi – résumé quotidien}\"" >> config.yaml
 
           {
